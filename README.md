@@ -16,6 +16,28 @@ Derfor kjører sjekken i stedet som en `launchd`-jobb på Mac-en, som har norsk 
 Workflowen ligger igjen i `.github/workflows/norli.yml`, men er deaktivert — den kan slås på
 igjen hvis jobben en gang skal kjøre fra en vert med norsk IP.
 
+## Hva som overvåkes
+
+To ting, uavhengig av hverandre:
+
+| | Felt | Hvorfor det er skilt |
+|---|---|---|
+| **Nettlager** | `products.stock_status` | Kan kjøpes og sendes hjem |
+| **25 butikker** (klikk og hent) | `pickupStores → products.qty_in_store` | Varen kan ligge i butikk uten å være kjøpbar på nett |
+
+Skillet er ikke teoretisk: 18. september viste siden «Ikke tilgjengelig på nettlager» samtidig
+som den var «På lager hos 1 butikker». Overvåker du bare `stock_status`, går du glipp av
+nettopp de tilfellene.
+
+Butikkene som overvåkes er de tre i Fredrikstad (`WATCHED_STORES`) og alle i Oslo
+(`WATCHED_REGIONS`). Se hele listen med butikk-ID-er:
+
+```bash
+python3 check_norli.py --stores      # * = overvåkes
+```
+
+Merk at `all_in_stock` **ikke** er nok alene — antallet ligger i `products.qty_in_store`.
+
 ## Hvorfor GraphQL og ikke tekstsøk i HTML-en
 
 Produktsiden rendres i nettleseren. Rå HTML inneholder ingen lagertekst i det hele tatt —
@@ -45,8 +67,10 @@ Scriptet spør i stedet Norlis Magento-GraphQL-endepunkt (`https://www.norli.no/
 
 ## Varsling
 
-- **Ved overgang utsolgt → på lager:** varsel med `urgent`-prioritet, som ringer gjennom
-  stillemodus på de fleste telefoner. Trykk på varselet for å gå rett til produktsiden.
+- **Når noe blir tilgjengelig:** varsel med `urgent`-prioritet, som ringer gjennom stillemodus
+  på de fleste telefoner. Varselet navngir hvilken butikk og hvor mange. Trykk for å gå rett
+  til produktsiden. Nettlager og hver enkelt butikk varsles hver for seg, så et varsel om én
+  butikk ikke skjuler et varsel om en annen.
 - **Mens varen fortsatt er på lager:** ett nytt ping hver 6. time, ikke hvert 5. minutt.
   Juster med `REPING_HOURS` i `check_norli.py`.
 - **Hvis oppslaget feiler:** ett varsel per sammenhengende feilperiode, så nedetid hos Norli
@@ -58,12 +82,14 @@ Scriptet spør i stedet Norlis Magento-GraphQL-endepunkt (`https://www.norli.no/
 
 `state.json` holder forrige status lokalt og er utenfor git.
 
-## Overvåke flere varer
+## Justere hva som overvåkes
 
-Legg EAN-koden (tallet bakerst i produkt-URL-en) inn i `SKUS` i `check_norli.py`:
+Alt ligger som konstanter øverst i `check_norli.py`:
 
 ```python
-SKUS = ["0196214144828", "0196214145528"]
+SKU = "0196214144828"          # EAN-koden bakerst i produkt-URL-en
+WATCHED_STORES = {261: "...", 167: "...", 140: "..."}
+WATCHED_REGIONS = {"Oslo"}     # hele regioner, f.eks. også "Østfold"
 ```
 
 ## Forbehold
