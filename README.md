@@ -23,13 +23,13 @@ To ting, uavhengig av hverandre:
 | | Felt | Hvorfor det er skilt |
 |---|---|---|
 | **Nettlager** | `products.stock_status` | Kan kjøpes og sendes hjem |
-| **25 butikker** (klikk og hent) | `pickupStores → products.qty_in_store` | Varen kan ligge i butikk uten å være kjøpbar på nett |
+| **27 butikker** (klikk og hent) | `pickupStores → products.qty_in_store` | Varen kan ligge i butikk uten å være kjøpbar på nett |
 
 Skillet er ikke teoretisk: 18. september viste siden «Ikke tilgjengelig på nettlager» samtidig
 som den var «På lager hos 1 butikker». Overvåker du bare `stock_status`, går du glipp av
 nettopp de tilfellene.
 
-Butikkene som overvåkes er de tre i Fredrikstad (`WATCHED_STORES`) og alle i Oslo
+Butikkene som overvåkes er tre i Fredrikstad og to i Sarpsborg (`WATCHED_STORES`) og alle i Oslo
 (`WATCHED_REGIONS`). Se hele listen med butikk-ID-er:
 
 ```bash
@@ -88,7 +88,7 @@ Alt ligger som konstanter øverst i `check_norli.py`:
 
 ```python
 SKU = "0196214144828"          # EAN-koden bakerst i produkt-URL-en
-WATCHED_STORES = {261: "...", 167: "...", 140: "..."}
+WATCHED_STORES = {261: "...", 167: "...", 140: "...", 115: "...", 152: "..."}
 WATCHED_REGIONS = {"Oslo"}     # hele regioner, f.eks. også "Østfold"
 ```
 

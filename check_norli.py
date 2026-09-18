@@ -37,6 +37,8 @@ WATCHED_STORES = {
     261: "Værstetorvet, Fredrikstad",
     167: "Nygaardsgaten, Fredrikstad",
     140: "Østfoldhallene, Fredrikstad",
+    115: "Storbyen Senter, Sarpsborg",
+    152: "Thon Senter Borg, Sarpsborg",
 }
 
 # Hele regioner som overvakes i tillegg. Ma matche `region` i API-et.
