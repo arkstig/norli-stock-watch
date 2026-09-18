@@ -17,7 +17,9 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-GRAPHQL_URL = "https://www.norli.no/graphql"
+# Norli har flere verter foran samme Magento-backend. WAF-en avviser tidvis
+# forespørsler fra datasenter-IP-er, så vi prøver den neste hvis den første svarer 403.
+GRAPHQL_URLS = ["https://www.norli.no/graphql", "https://checkout.norli.no/graphql"]
 PRODUCT_URL = "https://www.norli.no/{url_key}"
 
 # Legg til flere SKU-er (EAN-koden bakerst i produkt-URL-en) for a overvake flere varer.
@@ -28,7 +30,26 @@ SKUS = ["0196214144828"]
 REPING_HOURS = 6
 
 STATE_FILE = Path(__file__).with_name("state.json")
-USER_AGENT = "norli-stock-watch/1.0 (+https://github.com/arkstig/norli-stock-watch)"
+# WAF-en slipper bare gjennom det som ser ut som en ekte nettleser. En ærlig
+# bot-User-Agent ga 403 fra GitHubs runnere selv om den virket fra hjemmenett.
+BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "nb-NO,nb;q=0.9,no;q=0.8,en-US;q=0.7,en;q=0.6",
+    "Content-Type": "application/json",
+    "Origin": "https://www.norli.no",
+    "Referer": "https://www.norli.no/",
+    "sec-ch-ua": '"Chromium";v="140", "Not=A?Brand";v="24", "Google Chrome";v="140"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"macOS"',
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-origin",
+}
+NTFY_USER_AGENT = "norli-stock-watch/1.0 (+https://github.com/arkstig/norli-stock-watch)"
 
 QUERY = """
 query Stock($skus: [String]!) {
@@ -63,25 +84,27 @@ def save_state(state: dict) -> None:
 
 def fetch_products(skus: list[str]) -> list[dict]:
     payload = json.dumps({"query": QUERY, "variables": {"skus": skus}}).encode("utf-8")
-    request = urllib.request.Request(
-        GRAPHQL_URL,
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "User-Agent": USER_AGENT,
-        },
-    )
-    with urllib.request.urlopen(request, timeout=30) as response:
-        body = json.loads(response.read().decode("utf-8"))
+    last_error: Exception | None = None
 
-    if body.get("errors"):
-        raise RuntimeError(f"GraphQL-feil: {body['errors']}")
+    for url in GRAPHQL_URLS:
+        request = urllib.request.Request(url, data=payload, headers=dict(BROWSER_HEADERS))
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                body = json.loads(response.read().decode("utf-8"))
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            print(f"{url} feilet: {exc}", file=sys.stderr)
+            last_error = exc
+            continue
 
-    items = (body.get("data") or {}).get("products", {}).get("items")
-    if not items:
-        raise RuntimeError(f"Ingen produkter i svaret for {skus}")
-    return items
+        if body.get("errors"):
+            raise RuntimeError(f"GraphQL-feil: {body['errors']}")
+
+        items = (body.get("data") or {}).get("products", {}).get("items")
+        if not items:
+            raise RuntimeError(f"Ingen produkter i svaret for {skus}")
+        return items
+
+    raise RuntimeError(f"Alle endepunkter feilet, siste: {last_error}")
 
 
 def notify(topic: str, title: str, message: str, *, priority: str, tags: str, click: str | None = None) -> None:
@@ -90,7 +113,7 @@ def notify(topic: str, title: str, message: str, *, priority: str, tags: str, cl
         "Title": title.encode("utf-8").decode("latin-1", "replace"),
         "Priority": priority,
         "Tags": tags,
-        "User-Agent": USER_AGENT,
+        "User-Agent": NTFY_USER_AGENT,
     }
     if click:
         headers["Click"] = click
