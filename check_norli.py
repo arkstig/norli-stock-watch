@@ -180,7 +180,8 @@ def main() -> int:
         previous = state.get(sku, {})
         link = PRODUCT_URL.format(url_key=product.get("url_key", ""))
 
-        print(f"{name} [{sku}]: {status}")
+        stamp = now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"{stamp}  {status:<13} {name}", flush=True)
 
         entry = {"stock_status": status, "name": name, "checked_at": now().isoformat()}
         entry["last_alert"] = previous.get("last_alert")
