@@ -51,6 +51,10 @@ Scriptet spør i stedet Norlis Magento-GraphQL-endepunkt (`https://www.norli.no/
   Juster med `REPING_HOURS` i `check_norli.py`.
 - **Hvis oppslaget feiler:** ett varsel per sammenhengende feilperiode, så nedetid hos Norli
   ikke spammer telefonen.
+- **Livstegn hver 30. minutt** med `min`-prioritet — uten lyd eller vibrasjon. Det ligger i
+  ntfy-appen så du kan slå opp og se at jobben lever, ikke for å varsle deg. Slutter livstegnene
+  å komme, står overvåkingen. Juster eller skru av med `HEARTBEAT_MINUTES` i `check_norli.py`
+  (`0` = av).
 
 `state.json` holder forrige status lokalt og er utenfor git.
 
@@ -64,7 +68,12 @@ SKUS = ["0196214144828", "0196214145528"]
 
 ## Forbehold
 
+Sjekkene går hvert 3. minutt. Endre `StartInterval` i `install.sh` og kjør den på nytt for å justere.
+
 - **Macen må være våken.** Sover den, står sjekkene stille til den vekkes. `launchd` kjører
   jobben ved oppvåkning. Skal den overleve en lukket laptop, må den kjøre fra noe som står på
   hele døgnet — og det må ha norsk IP, se blokkeringen over.
 - **Husk å skru av** når du har handlet: `./install.sh --uninstall`.
+- **Livstegn er ikke en ekte dødmannsknapp.** Det forteller deg at jobben lever *når du ser
+  etter*. Vil du bli varslet automatisk når den slutter å kjøre, er healthchecks.io riktig
+  verktøy — scriptet pinger den ved hver kjøring, og den varsler deg når pingene uteblir.

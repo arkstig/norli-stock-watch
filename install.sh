@@ -38,7 +38,7 @@ cat > "$PLIST" <<PLISTEOF
   <key>EnvironmentVariables</key>
   <dict><key>NTFY_TOPIC</key><string>$TOPIC</string></dict>
   <key>WorkingDirectory</key><string>$DIR</string>
-  <key>StartInterval</key><integer>300</integer>
+  <key>StartInterval</key><integer>180</integer>
   <key>RunAtLoad</key><true/>
   <key>StandardOutPath</key><string>$LOG_DIR/out.log</string>
   <key>StandardErrorPath</key><string>$LOG_DIR/err.log</string>
@@ -49,7 +49,7 @@ PLISTEOF
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
 
-echo "Installert. Sjekker hvert 5. minutt."
+echo "Installert. Sjekker hvert 3. minutt."
 echo "  Status:  launchctl list | grep norli"
 echo "  Logg:    tail -f $LOG_DIR/out.log"
 echo "  Stopp:   $DIR/install.sh --uninstall"

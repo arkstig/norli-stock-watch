@@ -29,6 +29,11 @@ SKUS = ["0196214144828"]
 # siden forrige ping. Ellers varsles det bare pa overgangen utsolgt -> pa lager.
 REPING_HOURS = 6
 
+# Livstegn: sendes med min-prioritet, altsa uten lyd eller vibrasjon. Det er
+# der sa du kan sla opp i appen og se at jobben lever, ikke for a varsle deg.
+# Sett til 0 for a sla av.
+HEARTBEAT_MINUTES = 30
+
 STATE_FILE = Path(__file__).with_name("state.json")
 # WAF-en slipper bare gjennom det som ser ut som en ekte nettleser. En ærlig
 # bot-User-Agent ga 403 fra GitHubs runnere selv om den virket fra hjemmenett.
@@ -142,6 +147,19 @@ def should_alert(previous: dict, status: str) -> bool:
     return now() - sent_at > timedelta(hours=REPING_HOURS)
 
 
+def due_for_heartbeat(state: dict) -> bool:
+    if HEARTBEAT_MINUTES <= 0:
+        return False
+    last = state.get("_heartbeat")
+    if not last:
+        return True
+    try:
+        sent_at = datetime.fromisoformat(last)
+    except ValueError:
+        return True
+    return now() - sent_at > timedelta(minutes=HEARTBEAT_MINUTES)
+
+
 def main() -> int:
     topic = os.environ.get("NTFY_TOPIC")
     if not topic:
@@ -172,6 +190,7 @@ def main() -> int:
         return 1
 
     state.pop("_error", None)
+    statuses: list[str] = []
 
     for product in products:
         sku = product["sku"]
@@ -209,6 +228,18 @@ def main() -> int:
             print(f"  -> varsel sendt til ntfy-topic {topic}")
 
         state[sku] = entry
+        statuses.append(f"{name}: {'PA LAGER' if status == 'IN_STOCK' else 'utsolgt'}")
+
+    if due_for_heartbeat(state):
+        stamp = now().astimezone().strftime("%H:%M")
+        notify(
+            topic,
+            f"Overvaking lever ({stamp})",
+            "\n".join(statuses),
+            priority="min",
+            tags="green_circle",
+        )
+        state["_heartbeat"] = now().isoformat()
 
     save_state(state)
     return 0
