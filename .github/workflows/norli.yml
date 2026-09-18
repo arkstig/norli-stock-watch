@@ -1,3 +1,7 @@
+# MERK: denne workflowen er deaktivert. Norli svarer 403 på alt som kommer fra
+# GitHubs runnere (datasenter-IP). Behold den hvis du senere kjører fra en vert
+# med norsk IP; ellers er launchd-jobben på Macen den som gjelder. Se README.
+
 name: Norli stock watch
 
 on:

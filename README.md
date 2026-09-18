@@ -5,37 +5,54 @@ via [ntfy](https://ntfy.sh) i det øyeblikket varen kommer i beholdning.
 
 Overvåkes nå: **Pokémon 30th Celebration Elite Trainer Box** (SKU `0196214144828`, 1099 kr).
 
-## Slik virker det
+## Hvorfor dette ikke kjører i GitHub Actions
 
-GitHub Actions kjører `check_norli.py` hvert 5. minutt. Scriptet spør Norlis
-Magento-GraphQL-endepunkt (`https://www.norli.no/graphql`) om feltet `stock_status`
-og varsler når det går fra `OUT_OF_STOCK` til `IN_STOCK`.
+Planen var å kjøre sjekken i skyen på GitHub Actions. Det går ikke: **Norli svarer `403 Forbidden`
+på alt som kommer fra GitHubs servere.** Det gjelder ikke bare API-kall — et helt vanlig GET-kall
+på produktsiden får også 403. Blokkeringen er IP-basert (Azure/datasenter, utenfor Norge), ikke
+noe som lar seg løse med User-Agent eller andre headere.
 
-**Hvorfor GraphQL og ikke tekstsøk i HTML-en?** Produktsiden rendres i nettleseren.
-Rå HTML fra `curl` inneholder ingen lagertekst i det hele tatt — verken «Forventes i salg»
-eller «Legg i handlekurv». Et script som varsler når «Forventes i salg» *forsvinner* ville
-derfor slått ut som falskt positivt allerede ved første kjøring. GraphQL-feltet er
-strukturerte data fra samme kilde som nettbutikken selv bruker.
+Derfor kjører sjekken i stedet som en `launchd`-jobb på Mac-en, som har norsk IP.
+Workflowen ligger igjen i `.github/workflows/norli.yml`, men er deaktivert — den kan slås på
+igjen hvis jobben en gang skal kjøre fra en vert med norsk IP.
 
-## Varsling
+## Hvorfor GraphQL og ikke tekstsøk i HTML-en
 
-- **Ved overgang utsolgt → på lager:** varsel med `urgent`-prioritet (ringer gjennom
-  stillemodus på de fleste telefoner). Trykk på varselet for å gå rett til produktsiden.
-- **Mens varen fortsatt er på lager:** ett nytt ping hver 6. time, ikke hvert 5. minutt.
-  Juster med `REPING_HOURS` i `check_norli.py`.
-- **Hvis oppslaget feiler:** ett varsel per sammenhengende feilperiode, så nedetid hos
-  Norli ikke spammer telefonen. GitHub sender i tillegg e-post om feilende kjøringer.
+Produktsiden rendres i nettleseren. Rå HTML inneholder ingen lagertekst i det hele tatt —
+verken «Forventes i salg» eller «Legg i handlekurv». Et script som varsler når «Forventes i salg»
+*forsvinner* ville derfor slått ut som falskt positivt allerede ved første kjøring.
 
-`state.json` holder forrige status og commites tilbake til repoet kun når noe faktisk endrer seg.
+Scriptet spør i stedet Norlis Magento-GraphQL-endepunkt (`https://www.norli.no/graphql`) om feltet
+`stock_status` — strukturerte data fra samme kilde som nettbutikken selv bruker.
 
 ## Oppsett
 
 1. Installer ntfy-appen ([iOS](https://apps.apple.com/us/app/ntfy/id1625396347) /
-   [Android](https://play.google.com/store/apps/details?id=io.heckel.ntfy)) og abonner på topicet
-   som ligger i repo-secreten `NTFY_TOPIC`. Topicet er hemmeligheten — hvem som helst som kjenner
-   navnet kan lese varslene dine.
-2. Repoet må være **offentlig** for ubegrensede Actions-minutter. Et privat repo ville brukt opp
-   gratiskvoten på under en uke med kjøring hvert 5. minutt.
+   [Android](https://play.google.com/store/apps/details?id=io.heckel.ntfy)) og abonner på topicet.
+   Topicet er hele hemmeligheten — hvem som helst som kjenner navnet kan lese varslene dine.
+2. Installer jobben:
+
+   ```bash
+   ./install.sh <ntfy-topic>
+   ```
+
+| Kommando | Hva den gjør |
+|---|---|
+| `launchctl list \| grep norli` | Ser om jobben lever |
+| `tail -f ~/Library/Logs/norli-stock-watch/out.log` | Følger sjekkene |
+| `NTFY_TOPIC=<topic> python3 check_norli.py` | Kjører én sjekk manuelt |
+| `./install.sh --uninstall` | Skrur av overvåkingen |
+
+## Varsling
+
+- **Ved overgang utsolgt → på lager:** varsel med `urgent`-prioritet, som ringer gjennom
+  stillemodus på de fleste telefoner. Trykk på varselet for å gå rett til produktsiden.
+- **Mens varen fortsatt er på lager:** ett nytt ping hver 6. time, ikke hvert 5. minutt.
+  Juster med `REPING_HOURS` i `check_norli.py`.
+- **Hvis oppslaget feiler:** ett varsel per sammenhengende feilperiode, så nedetid hos Norli
+  ikke spammer telefonen.
+
+`state.json` holder forrige status lokalt og er utenfor git.
 
 ## Overvåke flere varer
 
@@ -47,10 +64,7 @@ SKUS = ["0196214144828", "0196214145528"]
 
 ## Forbehold
 
-- **Timing:** GitHubs cron er «best effort» og kjører sjelden helt presist. Regn med
-  5–20 minutter mellom hver reelle kjøring i travle perioder. For en ettertraktet vare som
-  selges ut på minutter er ikke dette en garanti — men det er raskere enn å sjekke selv.
-- **60-dagersregelen:** GitHub deaktiverer planlagte workflows i repoer uten aktivitet på
-  60 dager. Push en endring, eller trykk «Run workflow», innimellom hvis varen er langt unna.
-- **Husk å skru av** workflowen når du har handlet — Actions-fanen → Norli stock watch →
-  `...` → Disable workflow.
+- **Macen må være våken.** Sover den, står sjekkene stille til den vekkes. `launchd` kjører
+  jobben ved oppvåkning. Skal den overleve en lukket laptop, må den kjøre fra noe som står på
+  hele døgnet — og det må ha norsk IP, se blokkeringen over.
+- **Husk å skru av** når du har handlet: `./install.sh --uninstall`.
