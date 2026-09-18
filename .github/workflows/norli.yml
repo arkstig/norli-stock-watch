@@ -1,0 +1,50 @@
+name: Norli stock watch
+
+on:
+  schedule:
+    # Hvert 5. minutt. GitHub kjorer cron "best effort" og kan vare forsinket
+    # i travle perioder, sa regn med 5-20 minutter mellom hver reelle kjoring.
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+# Hindrer at to kjoringer skriver til state.json samtidig.
+concurrency:
+  group: norli-stock-watch
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Sjekk lagerstatus
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: python check_norli.py
+
+      - name: Lagre status
+        if: always()
+        run: |
+          if [ -z "$(git status --porcelain state.json)" ]; then
+            echo "Ingen endring i lagerstatus."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state.json
+          git commit -m "chore: oppdater lagerstatus"
+          for attempt in 1 2 3; do
+            git pull --rebase --autostash origin "${GITHUB_REF_NAME}" && git push && exit 0
+            echo "Push feilet (forsok $attempt), prover igjen..."
+            sleep 5
+          done
+          exit 1
