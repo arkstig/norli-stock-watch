@@ -21,6 +21,11 @@ Kilder:
             2. Sjekk (hver kjoring): hent hvert produkt i folgelisten fra
                /products/<handle>.js — ca. 2 KB gzippet per produkt.
 
+  maxgaming Egen plattform, ikke Shopify. Sokesiden /sok?q=30th gir alle
+          treffene med lagerstatus i ett kall, sa her trengs ingen todeling.
+          Statusen leses fra CSS-klassen `Lager_<kode>_NO` og ikke fra teksten
+          ved siden av, siden klassen er det maskinlesbare.
+
 Begge steder spores strukturerte data framfor HTML: Norlis produktside rendres
 i nettleseren og inneholder ingen lagertekst i det hele tatt.
 
@@ -30,6 +35,7 @@ Kjor `--targets` for a se alt som overvakes akkurat na.
 from __future__ import annotations
 
 import gzip
+import html
 import json
 import os
 import re
@@ -68,7 +74,20 @@ SHOPIFY_SHOPS = [
 ]
 
 # Produkter som aldri folges, uansett butikk. Kun vestlige utgaver onskes.
-SHOPIFY_EXCLUDE = r"japansk|kinesisk|japanese|chinese"
+EXCLUDE = r"japansk|kinesisk|japanese|chinese|simplified"
+
+# ── MaxGaming ────────────────────────────────────────────────────────────────
+MAXGAMING_SEARCH = "https://www.maxgaming.no/sok?q=30th"
+MAXGAMING_INCLUDE = r"30th[ -]*(anniversary[ -]*)?celebration"
+
+# Lagerkodene butikken bruker i CSS-klassen Lager_<kode>_NO.
+MAXGAMING_STATUS = {"1": "på lager", "8": "forhåndsbestilling", "10": "utsolgt"}
+MAXGAMING_AVAILABLE = {"1", "8"}
+
+# ── Prioritet ────────────────────────────────────────────────────────────────
+# Elite Trainer Box er det viktigste produktet, sa det far sitt eget varsel
+# med egen tittel — ellers drukner det i en samlemelding med resten.
+PRIORITY_PATTERN = r"elite trainer box|\betb\b"
 
 # Hvor ofte hele katalogen skannes for a finne nye produkter.
 DISCOVERY_MINUTES = 60
@@ -239,7 +258,7 @@ def shopify_product(base: str, handle: str) -> dict | None:
 def shopify_discover(name: str, base: str, pattern: str, state: dict) -> list[str]:
     """Skanner katalogen og returnerer handles som matcher butikkens mønster."""
     matcher = re.compile(pattern, re.IGNORECASE)
-    blocked = re.compile(SHOPIFY_EXCLUDE, re.IGNORECASE)
+    blocked = re.compile(EXCLUDE, re.IGNORECASE)
     found = [
         product["handle"]
         for product in shopify_catalog(base)
@@ -290,6 +309,57 @@ def shopify_targets(state: dict) -> list[Target]:
                 )
             )
 
+    return targets
+
+
+# ── MaxGaming ────────────────────────────────────────────────────────────────
+# Plukker ut lenke, tittel, pris og lagerkode fra hvert produktkort. Statusen
+# hentes fra klassen Lager_<kode>_NO, ikke fra teksten ved siden av: klassen er
+# maskinlesbar, teksten er der for mennesker og kan endres uten forvarsel.
+MAXGAMING_CARD = re.compile(
+    r'<a class="PT_Lank" href="(?P<url>[^"]+)" title="(?P<title>[^"]*)".*?'
+    r'(?:<span class="PT_PrisNormal">(?P<price>[^<]*)</span>.*?)?'
+    r'class="PT_text_Lagerstatus Lager_(?P<code>\d+)_NO"',
+    re.S,
+)
+
+
+def http_text(url: str) -> str:
+    request = urllib.request.Request(url, headers={**BROWSER_HEADERS, "Accept-Encoding": "gzip"})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        raw = response.read()
+        if response.headers.get("Content-Encoding") == "gzip":
+            raw = gzip.decompress(raw)
+        return raw.decode("utf-8", "replace")
+
+
+def maxgaming_targets() -> list[Target]:
+    page = http_text(MAXGAMING_SEARCH)
+    matcher = re.compile(MAXGAMING_INCLUDE, re.IGNORECASE)
+    blocked = re.compile(EXCLUDE, re.IGNORECASE)
+
+    targets: list[Target] = []
+    for card in MAXGAMING_CARD.finditer(page):
+        title = html.unescape(card.group("title")).strip()
+        if not matcher.search(title) or blocked.search(title):
+            continue
+        code = card.group("code")
+        price = (card.group("price") or "").strip()
+        status = MAXGAMING_STATUS.get(code, f"kode {code}")
+        targets.append(
+            Target(
+                key=f"maxgaming:{card.group('url')}",
+                label=f"MaxGaming {title}",
+                available=code in MAXGAMING_AVAILABLE,
+                url="https://www.maxgaming.no" + card.group("url"),
+                detail=f" ({price}, {status})" if price else f" ({status})",
+            )
+        )
+
+    if not targets:
+        # Tomt resultat betyr som regel at markupen er endret, ikke at butikken
+        # har sluttet a fore produktene. Da er stillhet verre enn en feil.
+        raise RuntimeError("Ingen MaxGaming-treff — markupen kan ha endret seg")
     return targets
 
 
@@ -346,7 +416,7 @@ def report_error(state: dict, topic: str, exc: Exception) -> None:
 
 
 def collect(state: dict) -> list[Target]:
-    return norli_targets() + shopify_targets(state)
+    return norli_targets() + shopify_targets(state) + maxgaming_targets()
 
 
 def dump_stores() -> int:
@@ -408,16 +478,24 @@ def main() -> int:
     summary = ", ".join(t.text for t in available) if available else "utsolgt overalt"
     print(f"{stamp}  {summary}  ({len(targets)} mål)", flush=True)
 
-    if in_stock_alerts:
+    # Elite Trainer Box varsles for seg. Slas den sammen med resten, ma du apne
+    # meldingen for a se om det var ETB-en eller et klistremerke.
+    priority_matcher = re.compile(PRIORITY_PATTERN, re.IGNORECASE)
+    for batch, title, tags in (
+        ([t for t in in_stock_alerts if priority_matcher.search(t.label)], "ELITE TRAINER BOX", "rotating_light,fire"),
+        ([t for t in in_stock_alerts if not priority_matcher.search(t.label)], "PÅ LAGER", "tada,shopping_cart"),
+    ):
+        if not batch:
+            continue
         notify(
             topic,
-            "PÅ LAGER",
-            "\n".join(f"• {t.text}" for t in in_stock_alerts) + f"\n\n{in_stock_alerts[0].url}",
+            title,
+            "\n".join(f"• {t.text}" for t in batch) + f"\n\n{batch[0].url}",
             priority="urgent",
-            tags="tada,shopping_cart",
-            click=in_stock_alerts[0].url,
+            tags=tags,
+            click=batch[0].url,
         )
-        print(f"  -> varsel: {', '.join(t.text for t in in_stock_alerts)}", flush=True)
+        print(f"  -> {title}: {', '.join(t.text for t in batch)}", flush=True)
 
     if new_alerts:
         # Et nytt produkt som ennå er utsolgt betyr som regel at et slipp er nært.

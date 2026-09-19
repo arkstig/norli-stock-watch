@@ -1,10 +1,14 @@
 # Stock watch
 
-Overvåker lagerstatus hos **norli.no**, **laboge.no** og **cardcenter.no** og sender
-push-varsel til mobilen via [ntfy](https://ntfy.sh) i det øyeblikket noe blir tilgjengelig.
+Overvåker lagerstatus hos **norli.no**, **laboge.no**, **cardcenter.no** og **maxgaming.no**
+og sender push-varsel til mobilen via [ntfy](https://ntfy.sh) i det øyeblikket noe blir
+tilgjengelig.
 
-Sporer nå **61 mål**: Elite Trainer Box hos Norli (nettlager + 27 butikker), 11 produkter
-hos Laboge og 22 hos Cardcenter. Japanske og kinesiske utgaver er utelatt.
+Sporer nå **68 mål**: Elite Trainer Box hos Norli (nettlager + 27 butikker), 11 produkter hos
+Laboge, 22 hos Cardcenter og 7 hos MaxGaming. Japanske og kinesiske utgaver er utelatt.
+
+**Elite Trainer Box varsles for seg**, med egen tittel (`ELITE TRAINER BOX`), så du ser på
+varselet hva det gjelder uten å åpne det. Styres av `PRIORITY_PATTERN`.
 
 ## Hva som overvåkes
 
@@ -48,6 +52,27 @@ utsolgt betyr som regel at et slipp er nært.
 
 Katalogene er større enn de ser ut: Laboge har over 5000 produkter, Cardcenter 2500.
 Gzip er derfor påkrevd — en katalogside er 950 KB rå og 57 KB komprimert.
+
+### MaxGaming — egen plattform
+
+Ikke Shopify. Søkesiden `/sok?q=30th` gir alle treffene med lagerstatus i ett kall på 105 KB,
+så her trengs ingen todeling. Kategorisiden hadde krevd fire sidehenting (460 KB), og
+produktsidene er 108 KB hver.
+
+Statusen leses fra CSS-klassen `Lager_<kode>_NO`, ikke fra teksten ved siden av — klassen er
+det maskinlesbare, teksten står der for mennesker og kan endres uten forvarsel:
+
+| Kode | Betyr |
+|---|---|
+| `Lager_1_NO` | på lager |
+| `Lager_8_NO` | forhåndsbestilling |
+| `Lager_10_NO` | utsolgt |
+
+Både `1` og `8` regnes som tilgjengelig, siden forhåndsbestilling også er en måte å sikre seg
+varen på. Statusteksten følger med i varselet, så du ser hvilken av dem det er.
+
+Gir søket null treff, kastes det en feil i stedet for å rapportere «utsolgt». Tomt resultat
+betyr nesten alltid at markupen er endret, og da er stillhet verre enn et feilvarsel.
 
 ## Hvorfor strukturerte data og ikke tekstsøk i HTML-en
 
@@ -98,12 +123,12 @@ Målt, ikke anslått:
 
 | | |
 |---|---|
-| Rutinekjøring | 7 sekunder, 0,6 s CPU, 17 MB minne, 72 KB nedlastet |
+| Rutinekjøring | 10 sekunder, 0,6 s CPU, 19 MB minne, 175 KB nedlastet |
 | Oppdagelse (hver time) | 21 sekunder, 1,7 MB nedlastet |
-| **Til sammen** | **~77 MB i døgnet** |
+| **Til sammen** | **~127 MB i døgnet** |
 
 Mellom kjøringene bruker den ingenting — prosessen avsluttes, og `launchd` starter den på nytt.
-De 7 sekundene er nesten utelukkende venting på nettverk: 61 forespørsler etter hverandre.
+De 10 sekundene er nesten utelukkende venting på nettverk: 68 forespørsler etter hverandre.
 
 ## Justere hva som overvåkes
 
@@ -114,7 +139,9 @@ NORLI_SKU = "0196214144828"          # EAN-koden bakerst i produkt-URL-en
 NORLI_STORES = {261: "...", ...}     # enkeltbutikker, ID fra --stores
 NORLI_REGIONS = {"Oslo"}             # hele regioner, f.eks. også "Østfold"
 SHOPIFY_SHOPS = [...]                # butikk + mønster for hva som følges
-SHOPIFY_EXCLUDE = r"japansk|kinesisk|japanese|chinese"
+MAXGAMING_INCLUDE = r"30th[ -]*(anniversary[ -]*)?celebration"
+EXCLUDE = r"japansk|kinesisk|japanese|chinese|simplified"
+PRIORITY_PATTERN = r"elite trainer box|\betb\b"   # får eget varsel
 DISCOVERY_MINUTES = 60               # hvor ofte hele katalogen skannes
 ```
 
