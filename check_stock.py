@@ -7,11 +7,19 @@ Kilder:
           klikk og hent (`pickupStores -> products.qty_in_store`) er to
           uavhengige ting: varen kan ligge i butikk uten a vare kjopbar pa nett.
 
-  laboge  Shopify. Sjekker de forseglede 30th Celebration-produktene, som
-          finnes i to utgaver: en placeholder til 1 kr og en "(Live)" til ekte
-          pris. Hvilken av dem som apnes ved slipp er ikke kjent, sa begge
-          overvakes. Nye produkter som dukker opp varsles ogsa, siden butikken
-          har sagt at slippene skjer til uannonserte tidspunkter.
+  shopify laboge.no og cardcenter.no. Begge har sagt/vist at 30th Celebration
+          slippes til uannonserte tidspunkter, sa bade tilgjengelighet og nye
+          produkter varsles.
+
+          To trinn, fordi en full katalogskanning er for dyr a gjore hvert
+          3. minutt: Laboge har over 5000 produkter, Cardcenter 2500, og en
+          full skann av begge er ca. 1,7 MB selv med gzip.
+
+            1. Oppdagelse (hver DISCOVERY_MINUTES): skann hele katalogen og
+               legg alle produkter som matcher butikkens monster inn i
+               folgelisten. Nye produkter varsles.
+            2. Sjekk (hver kjoring): hent hvert produkt i folgelisten fra
+               /products/<handle>.js — ca. 2 KB gzippet per produkt.
 
 Begge steder spores strukturerte data framfor HTML: Norlis produktside rendres
 i nettleseren og inneholder ingen lagertekst i det hele tatt.
@@ -21,8 +29,10 @@ Kjor `--targets` for a se alt som overvakes akkurat na.
 
 from __future__ import annotations
 
+import gzip
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -47,10 +57,25 @@ NORLI_STORES = {
 }
 NORLI_REGIONS = {"Oslo"}
 
-# ── Laboge ───────────────────────────────────────────────────────────────────
-LABOGE_PRODUCTS = "https://laboge.no/products.json"
-LABOGE_PRODUCT_URL = "https://laboge.no/products/{handle}"
-LABOGE_HANDLE_PREFIX = "pokemon-30th-celebration-"
+# ── Shopify-butikker ─────────────────────────────────────────────────────────
+# (visningsnavn, adresse, monster for hva som folges). Monsteret matches mot
+# handle og tittel, uten hensyn til store/sma bokstaver.
+SHOPIFY_SHOPS = [
+    ("Laboge", "https://laboge.no", r"^pokemon-30th-celebration-"),
+    # "30th Anniversary" alene fanger nokkelringer, mynter og annen merch, sa
+    # mønsteret krever "celebration".
+    ("Cardcenter", "https://cardcenter.no", r"30th[ -]*(anniversary[ -]*)?celebration"),
+]
+
+# Produkter som aldri folges, uansett butikk. Kun vestlige utgaver onskes.
+SHOPIFY_EXCLUDE = r"japansk|kinesisk|japanese|chinese"
+
+# Hvor ofte hele katalogen skannes for a finne nye produkter.
+DISCOVERY_MINUTES = 60
+
+# Stoppgrense for katalogskanning, sa en paginering som aldri tar slutt ikke
+# kan lope lopsk.
+MAX_CATALOG_PAGES = 40
 
 # ── Felles ───────────────────────────────────────────────────────────────────
 REPING_HOURS = 6          # gjenta varsel om noe fortsatt er tilgjengelig
@@ -105,13 +130,19 @@ def now() -> datetime:
 
 def http_json(url: str, *, data: bytes | None = None) -> dict:
     headers = dict(BROWSER_HEADERS)
+    # Gzip er ikke valgfritt her: Shopifys katalogsider er ca. 950 KB rå og
+    # 57 KB komprimert. urllib pakker ikke ut selv, sa det gjores under.
+    headers["Accept-Encoding"] = "gzip"
     if data is not None:
         headers["Content-Type"] = "application/json"
         headers["Origin"] = "https://www.norli.no"
         headers["Referer"] = "https://www.norli.no/"
     request = urllib.request.Request(url, data=data, headers=headers)
     with urllib.request.urlopen(request, timeout=30) as response:
-        return json.loads(response.read().decode("utf-8"))
+        raw = response.read()
+        if response.headers.get("Content-Encoding") == "gzip":
+            raw = gzip.decompress(raw)
+        return json.loads(raw.decode("utf-8"))
 
 
 # ── Norli ────────────────────────────────────────────────────────────────────
@@ -183,43 +214,82 @@ def norli_targets() -> list[Target]:
     return targets
 
 
-# ── Laboge ───────────────────────────────────────────────────────────────────
-def laboge_targets(state: dict) -> list[Target]:
+# ── Shopify ──────────────────────────────────────────────────────────────────
+def shopify_catalog(base: str) -> list[dict]:
+    """Alle produkter i butikken. Dyr — kalles bare ved oppdagelse."""
     products: list[dict] = []
-    for page in range(1, 5):
-        batch = http_json(f"{LABOGE_PRODUCTS}?limit=250&page={page}")["products"]
+    for page in range(1, MAX_CATALOG_PAGES + 1):
+        batch = http_json(f"{base}/products.json?limit=250&page={page}")["products"]
         if not batch:
             break
         products.extend(batch)
+    return products
 
-    if not products:
-        raise RuntimeError("Tomt produktsvar fra Laboge")
 
-    known = set(state.get("laboge_handles") or [])
-    seen: list[str] = []
+def shopify_product(base: str, handle: str) -> dict | None:
+    """Ett produkt, ca. 2 KB gzippet. None hvis det er fjernet fra butikken."""
+    try:
+        return http_json(f"{base}/products/{handle}.js")
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return None
+        raise
+
+
+def shopify_discover(name: str, base: str, pattern: str, state: dict) -> list[str]:
+    """Skanner katalogen og returnerer handles som matcher butikkens mønster."""
+    matcher = re.compile(pattern, re.IGNORECASE)
+    blocked = re.compile(SHOPIFY_EXCLUDE, re.IGNORECASE)
+    found = [
+        product["handle"]
+        for product in shopify_catalog(base)
+        if (matcher.search(product["handle"]) or matcher.search(product["title"]))
+        and not (blocked.search(product["handle"]) or blocked.search(product["title"]))
+    ]
+    state.setdefault("shops", {}).setdefault(name, {})["discovered"] = now().isoformat()
+    return sorted(found)
+
+
+def shopify_targets(state: dict) -> list[Target]:
     targets: list[Target] = []
+    shops = state.setdefault("shops", {})
 
-    for product in products:
-        handle = product["handle"]
-        if not handle.startswith(LABOGE_HANDLE_PREFIX):
-            continue
-        seen.append(handle)
-        variant = (product.get("variants") or [{}])[0]
-        available = any(v.get("available") for v in product.get("variants") or [])
-        price = variant.get("price")
-        targets.append(
-            Target(
-                key=f"laboge:{handle}",
-                label="Laboge " + product["title"],
-                available=available,
-                url=LABOGE_PRODUCT_URL.format(handle=handle),
-                detail=f" ({price} kr)" if price else "",
-                # Forste kjoring kjenner ingen handles, og da er ingenting "nytt".
-                new=bool(known) and handle not in known,
+    for name, base, pattern in SHOPIFY_SHOPS:
+        shop = shops.setdefault(name, {})
+        known: list[str] = shop.get("handles") or []
+
+        # Første kjøring, eller på tide med ny oppdagelse.
+        if not known or older_than(shop.get("discovered"), timedelta(minutes=DISCOVERY_MINUTES)):
+            found = shopify_discover(name, base, pattern, state)
+            if found:
+                # Før første oppdagelse er ingenting "nytt" — da hadde alt blitt varslet.
+                shop["new"] = sorted(set(found) - set(known)) if known else []
+                shop["handles"] = found
+                known = found
+        else:
+            shop["new"] = []
+
+        newly = set(shop.get("new") or [])
+
+        for handle in known:
+            product = shopify_product(base, handle)
+            if product is None:
+                continue
+            variants = product.get("variants") or []
+            available = any(v.get("available") for v in variants)
+            price = variants[0].get("price") if variants else None
+            targets.append(
+                Target(
+                    key=f"{name.lower()}:{handle}",
+                    label=f"{name} {product['title']}",
+                    available=available,
+                    url=f"{base}/products/{handle}",
+                    # Shopifys .js-endepunkt gir pris i ører, products.json i kroner.
+                    detail=f" ({price / 100:.2f} kr)" if isinstance(price, int) else "",
+                    new=handle in newly,
+                )
             )
-        )
 
-    state["laboge_handles"] = sorted(seen)
     return targets
 
 
@@ -276,7 +346,7 @@ def report_error(state: dict, topic: str, exc: Exception) -> None:
 
 
 def collect(state: dict) -> list[Target]:
-    return norli_targets() + laboge_targets(state)
+    return norli_targets() + shopify_targets(state)
 
 
 def dump_stores() -> int:

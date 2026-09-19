@@ -1,10 +1,10 @@
 # Stock watch
 
-Overvåker lagerstatus hos **norli.no** og **laboge.no** og sender push-varsel til mobilen
-via [ntfy](https://ntfy.sh) i det øyeblikket noe blir tilgjengelig.
+Overvåker lagerstatus hos **norli.no**, **laboge.no** og **cardcenter.no** og sender
+push-varsel til mobilen via [ntfy](https://ntfy.sh) i det øyeblikket noe blir tilgjengelig.
 
-Sporer nå **39 mål**: Pokémon 30th Celebration Elite Trainer Box hos Norli (nettlager +
-27 butikker) og alle 11 forseglede 30th Celebration-produkter hos Laboge.
+Sporer nå **61 mål**: Elite Trainer Box hos Norli (nettlager + 27 butikker), 11 produkter
+hos Laboge og 22 hos Cardcenter. Japanske og kinesiske utgaver er utelatt.
 
 ## Hva som overvåkes
 
@@ -28,15 +28,26 @@ python3 check_stock.py --stores      # * = overvåkes
 Merk at `all_in_stock` **ikke** holder alene — den er `false` selv når varen finnes.
 Antallet ligger i `products.qty_in_store`.
 
-### Laboge — Shopify
+### Laboge og Cardcenter — Shopify
 
-Butikken varslet at 30th Celebration-produktene slippes «med jevne mellomrom og til
-uannonserte tidspunkter». Hvert produkt finnes i **to utgaver**: en placeholder til 1 kr og
-en «(Live)» til ekte pris. Hvilken som åpnes ved slipp er ikke kjent, så begge overvåkes —
-alt med handle som starter på `pokemon-30th-celebration-`.
+Begge slipper 30th Celebration til uannonserte tidspunkter. Hos Laboge finnes hvert produkt
+i **to utgaver** — en placeholder til 1 kr og en «(Live)» til ekte pris — og det er ikke kjent
+hvilken som åpnes ved slipp, så begge følges.
 
-Dukker det opp et *nytt* produkt med den prefiksen, varsles det også, med lavere prioritet.
-Et nytt produkt som fortsatt er utsolgt betyr som regel at et slipp er nært.
+Overvåkingen går i to trinn, fordi en full katalogskanning er for dyr å gjøre hvert 3. minutt:
+
+| Trinn | Hvor ofte | Hva | Kostnad |
+|---|---|---|---|
+| **Sjekk** | hver kjøring | `/products/<handle>.js` for hvert fulgt produkt | ~2 KB per produkt |
+| **Oppdagelse** | hver time | hele katalogen, for å finne produkter som ikke fantes før | ~1,7 MB |
+
+Oppdagelsen er nødvendig fordi et slipp kan opprette et **helt nytt produkt**, og Shopify har
+ikke noe API for «list produkter som matcher X» — søke-API-et stopper på 10 treff, og Cardcenter
+har flere enn det. Nye produkter varsles med lavere prioritet: et nytt produkt som ennå er
+utsolgt betyr som regel at et slipp er nært.
+
+Katalogene er større enn de ser ut: Laboge har over 5000 produkter, Cardcenter 2500.
+Gzip er derfor påkrevd — en katalogside er 950 KB rå og 57 KB komprimert.
 
 ## Hvorfor strukturerte data og ikke tekstsøk i HTML-en
 
@@ -81,6 +92,19 @@ i `.github/workflows/norli.yml`, men er deaktivert.
 Sjekkene går hvert 3. minutt (`StartInterval` i `install.sh`). `state.json` holder forrige
 status lokalt og er utenfor git.
 
+## Ressursbruk
+
+Målt, ikke anslått:
+
+| | |
+|---|---|
+| Rutinekjøring | 7 sekunder, 0,6 s CPU, 17 MB minne, 72 KB nedlastet |
+| Oppdagelse (hver time) | 21 sekunder, 1,7 MB nedlastet |
+| **Til sammen** | **~77 MB i døgnet** |
+
+Mellom kjøringene bruker den ingenting — prosessen avsluttes, og `launchd` starter den på nytt.
+De 7 sekundene er nesten utelukkende venting på nettverk: 61 forespørsler etter hverandre.
+
 ## Justere hva som overvåkes
 
 Konstanter øverst i `check_stock.py`:
@@ -89,15 +113,20 @@ Konstanter øverst i `check_stock.py`:
 NORLI_SKU = "0196214144828"          # EAN-koden bakerst i produkt-URL-en
 NORLI_STORES = {261: "...", ...}     # enkeltbutikker, ID fra --stores
 NORLI_REGIONS = {"Oslo"}             # hele regioner, f.eks. også "Østfold"
-LABOGE_HANDLE_PREFIX = "pokemon-30th-celebration-"
+SHOPIFY_SHOPS = [...]                # butikk + mønster for hva som følges
+SHOPIFY_EXCLUDE = r"japansk|kinesisk|japanese|chinese"
+DISCOVERY_MINUTES = 60               # hvor ofte hele katalogen skannes
 ```
 
 ## Forbehold
 
 - **Macen må være våken.** Sover den, står sjekkene stille til den vekkes. Skal den overleve en
   lukket laptop, må den kjøre fra noe som står på hele døgnet — og det må ha norsk IP.
-- **Shopify cacher `products.json`** i noen titalls sekunder, så et Laboge-slipp kan bli
-  oppdaget litt etter at det faktisk skjedde.
+- **Shopify cacher svarene** i noen titalls sekunder, så et slipp kan bli oppdaget litt etter
+  at det faktisk skjedde.
+- **Helt nye produkter oppdages først ved neste katalogskanning**, altså inntil en time etter at
+  de dukket opp. Produkter som allerede følges sjekkes hvert 3. minutt. Senk
+  `DISCOVERY_MINUTES` hvis det er verdt båndbredden.
 - **Livstegn er ikke en ekte dødmannsknapp.** Det sier at jobben lever *når du ser etter*.
   Vil du varsles automatisk når den stopper, er healthchecks.io riktig verktøy.
 - **Husk å skru av** når du har handlet: `./install.sh --uninstall`.
