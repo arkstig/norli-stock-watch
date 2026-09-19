@@ -1,0 +1,15 @@
+name: Probe shops
+on: { workflow_dispatch: }
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -sS https://ipinfo.io/json | head -c 200; echo
+      - name: Norli
+        run: curl -sS -o /dev/null -w "norli graphql: %{http_code}\n" -X POST https://www.norli.no/graphql -H 'Content-Type: application/json' -d '{"query":"{products(filter:{sku:{eq:\"0196214144828\"}}){items{stock_status}}}"}' || true
+      - name: Laboge
+        run: curl -sS -o /dev/null -w "laboge: %{http_code}\n" "https://laboge.no/products/pokemon-30th-celebration-elite-trainer-box-live.js" || true
+      - name: Cardcenter
+        run: curl -sS -o /dev/null -w "cardcenter: %{http_code}\n" "https://cardcenter.no/products/maks-1-per-pers-pokemon-30th-celebration-elite-trainer-box.js" || true
+      - name: MaxGaming
+        run: curl -sS -o /dev/null -w "maxgaming: %{http_code}\n" "https://www.maxgaming.no/sok?q=30th" || true
