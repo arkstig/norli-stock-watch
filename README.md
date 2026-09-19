@@ -94,7 +94,9 @@ i `.github/workflows/norli.yml`, men er deaktivert.
 1. Installer ntfy-appen ([iOS](https://apps.apple.com/us/app/ntfy/id1625396347) /
    [Android](https://play.google.com/store/apps/details?id=io.heckel.ntfy)) og abonner på topicet.
    Topicet er hele hemmeligheten — hvem som helst som kjenner navnet kan lese varslene dine.
-2. `./install.sh <ntfy-topic>`
+2. `./install.sh <ntfy-topic>` — legg til `--always-on` på en maskin som skal stå på hele tiden
+
+Skal den kjøre på en maskin som står på døgnet rundt, følg **[SETUP-MAC.md](SETUP-MAC.md)**.
 
 | Kommando | Hva den gjør |
 |---|---|
@@ -157,8 +159,9 @@ sende feilvarsel. Derfor fanges `OSError`, som dekker alle tre. Test med
 
 ## Forbehold
 
-- **Macen må være våken.** Sover den, står sjekkene stille til den vekkes. Skal den overleve en
-  lukket laptop, må den kjøre fra noe som står på hele døgnet — og det må ha norsk IP.
+- **Macen må være våken.** Sover den, står sjekkene stille til den vekkes. Løsningen er en maskin
+  som står på hele tiden — se [SETUP-MAC.md](SETUP-MAC.md). Skyhosting er ikke et alternativ for
+  Norli-delen, siden den blokkerer datasenter-IP-er.
 - **Shopify cacher svarene** i noen titalls sekunder, så et slipp kan bli oppdaget litt etter
   at det faktisk skjedde.
 - **Helt nye produkter oppdages først ved neste katalogskanning**, altså inntil en time etter at
