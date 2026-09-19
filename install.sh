@@ -33,7 +33,7 @@ cat > "$PLIST" <<PLISTEOF
   <key>ProgramArguments</key>
   <array>
     <string>$PYTHON</string>
-    <string>$DIR/check_norli.py</string>
+    <string>$DIR/check_stock.py</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict><key>NTFY_TOPIC</key><string>$TOPIC</string></dict>
