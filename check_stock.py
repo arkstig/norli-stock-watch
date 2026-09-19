@@ -40,6 +40,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -97,6 +98,8 @@ DISCOVERY_MINUTES = 60
 MAX_CATALOG_PAGES = 40
 
 # ── Felles ───────────────────────────────────────────────────────────────────
+HTTP_ATTEMPTS = 3         # gjenforsøk per forespørsel
+HTTP_BACKOFF_SECONDS = 2
 REPING_HOURS = 6          # gjenta varsel om noe fortsatt er tilgjengelig
 HEARTBEAT_MINUTES = 30    # livstegn med min-prioritet; 0 slar av
 STATE_FILE = Path(__file__).with_name("state.json")
@@ -147,6 +150,29 @@ def now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def fetch(url: str, *, data: bytes | None = None, headers: dict | None = None) -> bytes:
+    """Henter en URL med gjenforsøk. Et enkelt avbrutt kall skal ikke rive ned
+    hele sjekken — butikkene kobler av og til ned midt i en serie forespørsler."""
+    last_error: Exception | None = None
+    for attempt in range(HTTP_ATTEMPTS):
+        try:
+            request = urllib.request.Request(url, data=data, headers=headers or {})
+            with urllib.request.urlopen(request, timeout=20) as response:
+                raw = response.read()
+                if response.headers.get("Content-Encoding") == "gzip":
+                    raw = gzip.decompress(raw)
+                return raw
+        except urllib.error.HTTPError:
+            raise  # 404 og lignende er svar, ikke nettverksfeil
+        except OSError as exc:
+            # socket.timeout er ikke TimeoutError for Python 3.10, og
+            # ConnectionResetError er ingen av delene. OSError dekker begge.
+            last_error = exc
+            if attempt + 1 < HTTP_ATTEMPTS:
+                time.sleep(HTTP_BACKOFF_SECONDS * (attempt + 1))
+    raise RuntimeError(f"{url} feilet etter {HTTP_ATTEMPTS} forsøk: {last_error}")
+
+
 def http_json(url: str, *, data: bytes | None = None) -> dict:
     headers = dict(BROWSER_HEADERS)
     # Gzip er ikke valgfritt her: Shopifys katalogsider er ca. 950 KB rå og
@@ -156,12 +182,7 @@ def http_json(url: str, *, data: bytes | None = None) -> dict:
         headers["Content-Type"] = "application/json"
         headers["Origin"] = "https://www.norli.no"
         headers["Referer"] = "https://www.norli.no/"
-    request = urllib.request.Request(url, data=data, headers=headers)
-    with urllib.request.urlopen(request, timeout=30) as response:
-        raw = response.read()
-        if response.headers.get("Content-Encoding") == "gzip":
-            raw = gzip.decompress(raw)
-        return json.loads(raw.decode("utf-8"))
+    return json.loads(fetch(url, data=data, headers=headers).decode("utf-8"))
 
 
 # ── Norli ────────────────────────────────────────────────────────────────────
@@ -171,7 +192,7 @@ def norli_graphql(query: str, variables: dict) -> dict:
     for url in NORLI_GRAPHQL:
         try:
             body = http_json(url, data=payload)
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        except (OSError, RuntimeError, json.JSONDecodeError) as exc:
             print(f"{url} feilet: {exc}", file=sys.stderr)
             last_error = exc
             continue
@@ -325,12 +346,7 @@ MAXGAMING_CARD = re.compile(
 
 
 def http_text(url: str) -> str:
-    request = urllib.request.Request(url, headers={**BROWSER_HEADERS, "Accept-Encoding": "gzip"})
-    with urllib.request.urlopen(request, timeout=30) as response:
-        raw = response.read()
-        if response.headers.get("Content-Encoding") == "gzip":
-            raw = gzip.decompress(raw)
-        return raw.decode("utf-8", "replace")
+    return fetch(url, headers={**BROWSER_HEADERS, "Accept-Encoding": "gzip"}).decode("utf-8", "replace")
 
 
 def maxgaming_targets() -> list[Target]:
@@ -449,7 +465,7 @@ def main() -> int:
 
     try:
         targets = collect(state)
-    except (urllib.error.URLError, TimeoutError, RuntimeError, json.JSONDecodeError, KeyError) as exc:
+    except (OSError, RuntimeError, json.JSONDecodeError, KeyError) as exc:
         report_error(state, topic, exc)
         print(f"FEIL: {exc}", file=sys.stderr)
         return 1

@@ -112,7 +112,9 @@ i `.github/workflows/norli.yml`, men er deaktivert.
 - **Nytt produkt hos Laboge:** `default`-prioritet.
 - **Livstegn hver 30. minutt:** `min`-prioritet — uten lyd eller vibrasjon. Ligger i appen så du
   kan slå opp og se at jobben lever. Slutter de å komme, står overvåkingen.
-- **Hvis oppslaget feiler:** ett varsel per sammenhengende feilperiode.
+- **Hvis oppslaget feiler:** ett varsel per sammenhengende feilperiode. Hver forespørsel
+  prøves tre ganger med økende pause først, siden butikkene av og til kobler ned midt i en
+  serie kall. Bare vedvarende feil varsles.
 
 Sjekkene går hvert 3. minutt (`StartInterval` i `install.sh`). `state.json` holder forrige
 status lokalt og er utenfor git.
@@ -144,6 +146,14 @@ EXCLUDE = r"japansk|kinesisk|japanese|chinese|simplified"
 PRIORITY_PATTERN = r"elite trainer box|\betb\b"   # får eget varsel
 DISCOVERY_MINUTES = 60               # hvor ofte hele katalogen skannes
 ```
+
+## Kjent fallgruve
+
+`launchd` kjører macOS' system-Python (3.9), ikke den `python3` du har i skallet. Der er
+`socket.timeout` ikke en `TimeoutError`, og `ConnectionResetError` er ingen av delene — så
+`except TimeoutError` slipper begge gjennom og jobben dør med en traceback i stedet for å
+sende feilvarsel. Derfor fanges `OSError`, som dekker alle tre. Test med
+`/Library/Developer/CommandLineTools/usr/bin/python3` før du stoler på en endring.
 
 ## Forbehold
 
